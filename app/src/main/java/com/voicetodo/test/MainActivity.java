@@ -17,6 +17,7 @@ import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.StrikethroughSpan;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
@@ -35,6 +36,8 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.TextStyle;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
@@ -45,6 +48,22 @@ import java.util.UUID;
 public final class MainActivity extends Activity {
     private static final int REQUEST_SPEECH = 1001;
     private static final int REQUEST_NOTIFICATION = 1002;
+    private static final int YEAR_PICKER_START = 2000;
+    private static final int YEAR_PICKER_END = 2100;
+    private static final int[] REMINDER_OPTIONS = {
+            0,
+            5, 10, 15, 30,
+            60, 120, 180, 360, 720,
+            1_440, 2_880, 4_320, 7_200,
+            10_080, 20_160, 40_320
+    };
+    private static final String[] REMINDER_LABELS = {
+            "일정 시간",
+            "5분 전", "10분 전", "15분 전", "30분 전",
+            "1시간 전", "2시간 전", "3시간 전", "6시간 전", "12시간 전",
+            "1일 전", "2일 전", "3일 전", "5일 전",
+            "1주 전", "2주 전", "4주 전"
+    };
 
     private static final int INK = Color.rgb(24, 29, 43);
     private static final int MUTED = Color.rgb(112, 119, 139);
@@ -54,13 +73,18 @@ public final class MainActivity extends Activity {
     private static final int PURPLE_SOFT = Color.rgb(239, 236, 255);
     private static final int RED = Color.rgb(225, 73, 86);
     private static final int RED_SOFT = Color.rgb(255, 236, 239);
+    private static final int RED_RANGE = Color.rgb(249, 184, 192);
     private static final int BLUE = Color.rgb(54, 112, 226);
     private static final int BLUE_SOFT = Color.rgb(232, 240, 255);
+    private static final int BLUE_RANGE = Color.rgb(177, 202, 249);
+    private static final int AMBER = Color.rgb(202, 132, 19);
+    private static final int AMBER_SOFT = Color.rgb(255, 247, 222);
     private static final int BORDER = Color.rgb(227, 229, 238);
 
     private final List<TodoItem> items = new ArrayList<>();
     private TodoStore store;
     private GridLayout calendarGrid;
+    private TextView yearTitle;
     private TextView monthTitle;
     private TextView selectedDateTitle;
     private TextView selectedDateSummary;
@@ -78,6 +102,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         NotificationHelper.createChannel(this);
+        NotificationHelper.scheduleNextDailySummary(this);
         store = new TodoStore(this);
         items.addAll(store.load());
         sortItems();
@@ -88,6 +113,13 @@ public final class MainActivity extends Activity {
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATION);
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 사용자가 앱을 열었으면 오래된 묶음 알림을 알림창에 남겨 두지 않는다.
+        NotificationHelper.clearDailySummary(this);
     }
 
     private View buildScreen() {
@@ -221,27 +253,38 @@ public final class MainActivity extends Activity {
 
         LinearLayout calendarHeader = horizontal();
         Button previous = compactButton("‹");
-        previous.setOnClickListener(v -> {
-            visibleMonth = visibleMonth.minusMonths(1);
-            selectedDate = visibleMonth.atDay(1);
-            renderAll();
-        });
+        previous.setOnClickListener(v -> moveVisibleMonth(-1));
         calendarHeader.addView(previous, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
-        monthTitle = text("", 20, INK, true);
+        LinearLayout dateSelectors = horizontal();
+        dateSelectors.setGravity(Gravity.CENTER);
+        yearTitle = text("", 18, INK, true);
+        yearTitle.setGravity(Gravity.CENTER);
+        yearTitle.setPadding(dp(12), 0, dp(12), 0);
+        yearTitle.setBackground(rounded(Color.rgb(247, 247, 251), 14, Color.TRANSPARENT));
+        yearTitle.setContentDescription("연도 선택");
+        yearTitle.setOnClickListener(v -> showYearPicker());
+        dateSelectors.addView(yearTitle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)));
+
+        monthTitle = text("", 18, PURPLE, true);
         monthTitle.setGravity(Gravity.CENTER);
-        calendarHeader.addView(monthTitle, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        monthTitle.setPadding(dp(12), 0, dp(12), 0);
+        monthTitle.setBackground(rounded(PURPLE_SOFT, 14, Color.TRANSPARENT));
+        monthTitle.setContentDescription("월 선택");
+        monthTitle.setOnClickListener(v -> showMonthPicker());
+        LinearLayout.LayoutParams monthSelectorParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38));
+        monthSelectorParams.setMarginStart(dp(7));
+        dateSelectors.addView(monthTitle, monthSelectorParams);
+        calendarHeader.addView(dateSelectors, new LinearLayout.LayoutParams(0, dp(42), 1f));
 
         Button next = compactButton("›");
-        next.setOnClickListener(v -> {
-            visibleMonth = visibleMonth.plusMonths(1);
-            selectedDate = visibleMonth.atDay(1);
-            renderAll();
-        });
+        next.setOnClickListener(v -> moveVisibleMonth(1));
         calendarHeader.addView(next, new LinearLayout.LayoutParams(dp(42), dp(42)));
         calendarPanel.addView(calendarHeader, matchWrap());
 
-        calendarGrid = new GridLayout(this);
+        calendarGrid = new SwipeCalendarGrid();
         calendarGrid.setColumnCount(7);
         calendarGrid.setRowCount(7);
         calendarGrid.setPadding(0, dp(8), 0, 0);
@@ -250,11 +293,15 @@ public final class MainActivity extends Activity {
         LinearLayout legend = horizontal();
         legend.setGravity(Gravity.CENTER);
         legend.setPadding(0, dp(9), 0, 0);
-        legend.addView(legendItem("미완료", RED, RED_SOFT));
+        legend.addView(legendItem("미완료", RED_RANGE));
         TextView spacer = new TextView(this);
         legend.addView(spacer, new LinearLayout.LayoutParams(dp(18), 1));
-        legend.addView(legendItem("완료", BLUE, BLUE_SOFT));
+        legend.addView(legendItem("완료", BLUE_RANGE));
         calendarPanel.addView(legend, matchWrap());
+        TextView importanceLegend = text("진한 숫자·선 = 중요 일정 포함", 11, AMBER, true);
+        importanceLegend.setGravity(Gravity.CENTER);
+        importanceLegend.setPadding(0, dp(5), 0, 0);
+        calendarPanel.addView(importanceLegend, matchWrap());
 
         LinearLayout detailHeader = horizontal();
         detailHeader.setPadding(dp(2), dp(22), dp(2), dp(10));
@@ -301,10 +348,41 @@ public final class MainActivity extends Activity {
     }
 
     private void addTodoFromText(String source) {
-        KoreanTodoParser.Result parsed = KoreanTodoParser.parse(source);
-        TodoItem item = new TodoItem(
-                UUID.randomUUID().toString(), parsed.title, source, parsed.scheduledAt,
-                parsed.reminderMinutes, parsed.category, false, System.currentTimeMillis());
+        ParsedCalendarEvent parsed = KoreanTodoParser.parse(source);
+        if (parsed.intent == ParsedCalendarEvent.Intent.SEARCH_EVENT) {
+            selectedDate = parsed.startDate;
+            visibleMonth = YearMonth.from(selectedDate);
+            renderAll();
+            Toast.makeText(this, "해당 날짜의 일정을 열었습니다.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (parsed.intent == ParsedCalendarEvent.Intent.DELETE_EVENT ||
+                parsed.intent == ParsedCalendarEvent.Intent.UPDATE_EVENT) {
+            selectedDate = parsed.startDate;
+            visibleMonth = YearMonth.from(selectedDate);
+            renderAll();
+            Toast.makeText(this, "해당 날짜의 카드를 열었습니다. 카드에서 변경하거나 삭제해 주세요.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (parsed.requiresConfirmation) {
+            showParseConfirmation(source, parsed);
+            return;
+        }
+        saveParsedTodo(source, parsed);
+    }
+
+    private void showParseConfirmation(String source, ParsedCalendarEvent parsed) {
+        new AlertDialog.Builder(this)
+                .setTitle("일정을 확인해 주세요")
+                .setMessage(formatParsedSummary(parsed) + "\n\n확인 이유: " + confirmationLabel(parsed.confirmationReason))
+                .setNegativeButton("취소", null)
+                .setPositiveButton("이대로 저장", (dialog, which) -> saveParsedTodo(source, parsed))
+                .show();
+    }
+
+    private void saveParsedTodo(String source, ParsedCalendarEvent parsed) {
+        TodoItem item = TodoItem.fromParsed(
+                UUID.randomUUID().toString(), source, parsed, ZoneId.systemDefault(), System.currentTimeMillis());
         items.add(item);
         sortItems();
         store.save(items);
@@ -314,6 +392,39 @@ public final class MainActivity extends Activity {
         visibleMonth = YearMonth.from(selectedDate);
         renderAll();
         Toast.makeText(this, "‘" + item.title + "’을 바로 저장했습니다.", Toast.LENGTH_SHORT).show();
+    }
+
+    private String formatParsedSummary(ParsedCalendarEvent parsed) {
+        StringBuilder summary = new StringBuilder();
+        summary.append("제목: ").append(parsed.title).append("\n");
+        summary.append("날짜: ").append(parsed.startDate);
+        if (parsed.endDate != null) summary.append(" ~ ").append(parsed.endDate);
+        summary.append("\n시간: ");
+        if (parsed.allDay) summary.append("하루 종일");
+        else {
+            summary.append(parsed.startTime == null ? "미정" : parsed.startTime);
+            if (parsed.endTime != null) summary.append(" ~ ").append(parsed.endTime);
+        }
+        summary.append("\n분류: ").append(parsed.category);
+        if (parsed.repeat != null) summary.append(" · ").append(parsed.repeat.summary());
+        if (parsed.eventType == ParsedCalendarEvent.EventType.DEADLINE) summary.append(" · 마감");
+        return summary.toString();
+    }
+
+    private String confirmationLabel(String reason) {
+        if (reason == null) return "해석 확인 필요";
+        return switch (reason) {
+            case "AM_PM_AMBIGUITY" -> "오전인지 오후인지 불분명합니다";
+            case "MIDNIGHT_AMBIGUITY" -> "밤 12시의 날짜가 불분명합니다";
+            case "APPROXIMATE_DATE" -> "정확한 날짜가 아닌 표현입니다";
+            case "APPROXIMATE_TIME" -> "정확한 시간이 아닌 표현입니다";
+            case "MULTIPLE_DATE_AMBIGUITY" -> "하나의 기간인지 두 일정인지 불분명합니다";
+            case "WEEKEND_AMBIGUITY" -> "토요일·일요일 전체 일정인지 확인이 필요합니다";
+            case "INVALID_DATE" -> "유효하지 않은 날짜입니다";
+            case "END_BEFORE_START" -> "종료가 시작보다 빠릅니다";
+            case "MISSING_TITLE" -> "일정 제목을 찾지 못했습니다";
+            default -> reason;
+        };
     }
 
     private void renderAll() {
@@ -345,15 +456,23 @@ public final class MainActivity extends Activity {
         if (activeSearchQuery.isEmpty()) return;
         String normalizedQuery = activeSearchQuery.toLowerCase(Locale.KOREAN);
         searchResultList.removeAllViews();
-        int matches = 0;
+        List<TodoItem> results = new ArrayList<>();
         for (TodoItem item : items) {
             String searchable = (item.title + " " + item.originalVoiceText + " " + item.category + " "
-                    + dateOf(item).getMonthValue() + "월 " + dateOf(item).getDayOfMonth() + "일")
+                    + dateOf(item).getMonthValue() + "월 " + dateOf(item).getDayOfMonth() + "일 "
+                    + endDateOf(item).getMonthValue() + "월 " + endDateOf(item).getDayOfMonth() + "일 "
+                    + item.repeatFrequency + " " + item.eventType + (item.important ? " 중요 긴급 최우선" : " 일반"))
                     .toLowerCase(Locale.KOREAN);
             if (!searchable.contains(normalizedQuery)) continue;
-            searchResultList.addView(buildSearchResult(item), searchResultParams());
-            matches++;
+            results.add(item);
         }
+        results.sort(Comparator.comparing((TodoItem item) -> !item.important)
+                .thenComparing(item -> item.completed)
+                .thenComparingLong(item -> item.scheduledAt));
+        for (TodoItem item : results) {
+            searchResultList.addView(buildSearchResult(item), searchResultParams());
+        }
+        int matches = results.size();
         searchResultTitle.setText("‘" + activeSearchQuery + "’ 검색 결과 " + matches + "개");
         if (matches == 0) {
             TextView empty = text("일치하는 할 일이 없습니다.", 14, MUTED, false);
@@ -381,11 +500,10 @@ public final class MainActivity extends Activity {
         card.addView(statusDot, new LinearLayout.LayoutParams(dp(26), dp(26)));
 
         LinearLayout copy = vertical();
-        TextView title = text(item.title, 15, item.completed ? MUTED : INK, true);
+        TextView title = text((item.important ? "★ " : "") + item.title,
+                15, item.completed ? MUTED : INK, true);
         copy.addView(title);
-        String date = new SimpleDateFormat("M월 d일 (E) a h:mm", Locale.KOREAN)
-                .format(new Date(item.scheduledAt));
-        TextView meta = text(date + " · " + item.category, 12, MUTED, false);
+        TextView meta = text(formatSchedule(item, true) + " · " + item.category, 12, MUTED, false);
         meta.setPadding(0, dp(3), 0, 0);
         copy.addView(meta);
         LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -401,18 +519,65 @@ public final class MainActivity extends Activity {
     private void renderHeader() {
         int todayOpen = 0;
         int allOpen = 0;
+        int importantOpen = 0;
         LocalDate today = LocalDate.now();
         for (TodoItem item : items) {
             if (!item.completed) {
                 allOpen++;
-                if (dateOf(item).equals(today)) todayOpen++;
+                if (item.important) importantOpen++;
+                if (occursOnDate(item, today)) todayOpen++;
             }
         }
-        headerSummary.setText("오늘 " + todayOpen + "개 · 전체 미완료 " + allOpen + "개");
+        headerSummary.setText("오늘 " + todayOpen + "개 · 중요 " + importantOpen
+                + "개 · 전체 미완료 " + allOpen + "개");
+    }
+
+    private void moveVisibleMonth(int amount) {
+        jumpToMonth(visibleMonth.plusMonths(amount));
+    }
+
+    private void jumpToMonth(YearMonth target) {
+        int day = Math.min(selectedDate.getDayOfMonth(), target.lengthOfMonth());
+        visibleMonth = target;
+        selectedDate = target.atDay(day);
+        renderAll();
+    }
+
+    private void showYearPicker() {
+        int count = YEAR_PICKER_END - YEAR_PICKER_START + 1;
+        String[] years = new String[count];
+        for (int i = 0; i < count; i++) years[i] = (YEAR_PICKER_START + i) + "년";
+        int selected = Math.max(0, Math.min(count - 1, visibleMonth.getYear() - YEAR_PICKER_START));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("연도 선택")
+                .setSingleChoiceItems(years, selected, (picker, which) -> {
+                    jumpToMonth(YearMonth.of(YEAR_PICKER_START + which, visibleMonth.getMonthValue()));
+                    picker.dismiss();
+                })
+                .setNegativeButton("취소", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getListView().setSelection(Math.max(0, selected - 2)));
+        dialog.show();
+    }
+
+    private void showMonthPicker() {
+        String[] months = new String[12];
+        for (int i = 0; i < months.length; i++) months[i] = (i + 1) + "월";
+
+        new AlertDialog.Builder(this)
+                .setTitle(visibleMonth.getYear() + "년 월 선택")
+                .setSingleChoiceItems(months, visibleMonth.getMonthValue() - 1, (dialog, which) -> {
+                    jumpToMonth(YearMonth.of(visibleMonth.getYear(), which + 1));
+                    dialog.dismiss();
+                })
+                .setNegativeButton("취소", null)
+                .show();
     }
 
     private void renderCalendar() {
-        monthTitle.setText(visibleMonth.getYear() + "년 " + visibleMonth.getMonthValue() + "월");
+        yearTitle.setText(visibleMonth.getYear() + "년 ▾");
+        monthTitle.setText(visibleMonth.getMonthValue() + "월 ▾");
         calendarGrid.removeAllViews();
 
         String[] weekdays = {"일", "월", "화", "수", "목", "금", "토"};
@@ -431,11 +596,11 @@ public final class MainActivity extends Activity {
             int column = slot % 7;
             int day = slot - firstColumn + 1;
             if (day < 1 || day > length) {
-                calendarGrid.addView(new TextView(this), gridParams(row, column, dp(62)));
+                calendarGrid.addView(new TextView(this), gridParams(row, column, dp(66)));
                 continue;
             }
             LocalDate date = visibleMonth.atDay(day);
-            calendarGrid.addView(buildDayCell(date, column), gridParams(row, column, dp(62)));
+            calendarGrid.addView(buildDayCell(date, column), gridParams(row, column, dp(66)));
         }
     }
 
@@ -460,17 +625,25 @@ public final class MainActivity extends Activity {
         number.setGravity(Gravity.CENTER);
         cell.addView(number, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
 
-        int open = countForDate(date, false);
-        int completed = countForDate(date, true);
+        int open = countSingleDayForDate(date, false);
+        int completed = countSingleDayForDate(date, true);
+        boolean importantOpen = hasImportantSingleDay(date, false);
+        boolean importantCompleted = hasImportantSingleDay(date, true);
         LinearLayout counts = horizontal();
         counts.setGravity(Gravity.CENTER);
-        if (open > 0) counts.addView(countBadge(open, RED, RED_SOFT));
+        if (open > 0) counts.addView(countBadge(open, RED, RED_SOFT, importantOpen));
         if (open > 0 && completed > 0) {
             TextView gap = new TextView(this);
             counts.addView(gap, new LinearLayout.LayoutParams(dp(3), 1));
         }
-        if (completed > 0) counts.addView(countBadge(completed, BLUE, BLUE_SOFT));
-        cell.addView(counts, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(23)));
+        if (completed > 0) counts.addView(countBadge(completed, BLUE, BLUE_SOFT, importantCompleted));
+        cell.addView(counts, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(18)));
+
+        LinearLayout rangeLines = vertical();
+        rangeLines.setGravity(Gravity.CENTER_VERTICAL);
+        addRangeLine(rangeLines, date, false, RED_RANGE);
+        addRangeLine(rangeLines, date, true, BLUE_RANGE);
+        cell.addView(rangeLines, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(14)));
         return cell;
     }
 
@@ -479,12 +652,20 @@ public final class MainActivity extends Activity {
         selectedDateTitle.setText(selectedDate.getMonthValue() + "월 " + selectedDate.getDayOfMonth() + "일 " + weekday);
         int open = countForDate(selectedDate, false);
         int completed = countForDate(selectedDate, true);
-        selectedDateSummary.setText("미완료 " + open + "개 · 완료 " + completed + "개");
+        int important = countImportantForDate(selectedDate);
+        selectedDateSummary.setText("미완료 " + open + "개 · 완료 " + completed
+                + "개" + (important > 0 ? " · 중요 " + important + "개" : ""));
 
         detailList.removeAllViews();
-        int shown = 0;
+        List<TodoItem> dayItems = new ArrayList<>();
         for (TodoItem item : items) {
-            if (!dateOf(item).equals(selectedDate)) continue;
+            if (!occursOnDate(item, selectedDate)) continue;
+            dayItems.add(item);
+        }
+        dayItems.sort(Comparator.comparing((TodoItem item) -> !item.important)
+                .thenComparingLong(item -> item.scheduledAt));
+        int shown = 0;
+        for (TodoItem item : dayItems) {
             detailList.addView(buildDetailCard(item), detailCardParams());
             shown++;
         }
@@ -526,17 +707,33 @@ public final class MainActivity extends Activity {
         meta.addView(status, new LinearLayout.LayoutParams(0, dp(27), 1f));
         content.addView(meta, matchWrap());
 
+        LinearLayout titleRow = horizontal();
+        titleRow.setPadding(0, dp(7), 0, dp(2));
+        TextView priority = text(item.important ? "★" : "☆", 23, item.important ? AMBER : MUTED, true);
+        priority.setGravity(Gravity.CENTER);
+        priority.setBackground(rounded(item.important ? AMBER_SOFT : Color.rgb(247, 247, 250),
+                17, Color.TRANSPARENT));
+        priority.setOnClickListener(v -> toggleImportant(item));
+        titleRow.addView(priority, new LinearLayout.LayoutParams(dp(36), dp(36)));
+
         TextView title = text(item.title, 18, item.completed ? MUTED : INK, true);
-        title.setPadding(0, dp(9), 0, dp(4));
+        title.setGravity(Gravity.CENTER_VERTICAL);
         if (item.completed) {
             SpannableString strike = new SpannableString(item.title);
             strike.setSpan(new StrikethroughSpan(), 0, strike.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             title.setText(strike);
         }
-        content.addView(title);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                0, dp(40), 1f);
+        titleParams.setMarginStart(dp(9));
+        titleRow.addView(title, titleParams);
+        content.addView(titleRow, matchWrap());
 
-        String reminder = item.reminderMinutes == 0 ? "일정 시간 알림" : item.reminderMinutes + "분 전 알림";
-        TextView time = text(formatTime(item.scheduledAt) + " · " + reminder, 13, MUTED, false);
+        String reminder = formatReminderSummary(item);
+        String extra = "";
+        if (!item.repeatFrequency.isBlank()) extra += " · " + repeatLabel(item);
+        if ("DEADLINE".equals(item.eventType)) extra += " · 마감";
+        TextView time = text(formatSchedule(item, false) + " · " + reminder + extra, 13, MUTED, false);
         content.addView(time);
 
         if (!item.originalVoiceText.isBlank()) {
@@ -547,14 +744,20 @@ public final class MainActivity extends Activity {
 
         LinearLayout actions = horizontal();
         actions.setPadding(0, dp(12), 0, 0);
-        Button toggle = button(item.completed ? "미완료로 변경" : "완료로 변경",
+        Button toggle = button(item.completed ? "미완료" : "완료",
                 item.completed ? RED_SOFT : BLUE_SOFT,
                 item.completed ? RED : BLUE);
         toggle.setOnClickListener(v -> toggleStatus(item));
-        actions.addView(toggle, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        actions.addView(toggle, new LinearLayout.LayoutParams(0, dp(42), 1f));
+
+        Button reminderButton = button("알림", PURPLE_SOFT, PURPLE);
+        reminderButton.setOnClickListener(v -> showReminderSettings(item));
+        LinearLayout.LayoutParams reminderParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
+        reminderParams.setMarginStart(dp(8));
+        actions.addView(reminderButton, reminderParams);
 
         Button delete = button("삭제", Color.rgb(246, 246, 249), MUTED);
-        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(dp(68), dp(44));
+        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
         deleteParams.setMarginStart(dp(8));
         actions.addView(delete, deleteParams);
         delete.setOnClickListener(v -> confirmDelete(item));
@@ -573,6 +776,72 @@ public final class MainActivity extends Activity {
         Toast.makeText(this, item.completed ? "완료로 변경했습니다." : "미완료로 되돌렸습니다.", Toast.LENGTH_SHORT).show();
     }
 
+    private void toggleImportant(TodoItem item) {
+        item.important = !item.important;
+        if (!item.completed) NotificationHelper.schedule(this, item);
+        store.save(items);
+        renderAll();
+        Toast.makeText(this, item.important ? "중요 일정으로 표시했습니다." : "일반 일정으로 변경했습니다.",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private void showReminderSettings(TodoItem item) {
+        List<Integer> current = item.reminderOffsetList();
+        boolean[] checked = new boolean[REMINDER_OPTIONS.length];
+        for (int i = 0; i < REMINDER_OPTIONS.length; i++) {
+            checked[i] = current.contains(REMINDER_OPTIONS[i]);
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("알림 시점 선택 · 복수 선택 가능")
+                .setMultiChoiceItems(REMINDER_LABELS, checked, (dialog, which, isChecked) ->
+                        checked[which] = isChecked)
+                .setNegativeButton("취소", null)
+                .setNeutralButton("모두 해제", (dialog, which) ->
+                        saveReminderSettings(item, new ArrayList<>()))
+                .setPositiveButton("저장", (dialog, which) -> {
+                    List<Integer> selected = new ArrayList<>();
+                    for (int i = 0; i < REMINDER_OPTIONS.length; i++) {
+                        if (checked[i]) selected.add(REMINDER_OPTIONS[i]);
+                    }
+                    saveReminderSettings(item, selected);
+                })
+                .show();
+    }
+
+    private void saveReminderSettings(TodoItem item, List<Integer> offsets) {
+        item.setReminderOffsets(offsets);
+        int scheduled = NotificationHelper.schedule(this, item);
+        store.save(items);
+        renderAll();
+
+        String message;
+        if (offsets.isEmpty()) message = "이 일정의 개별 알림을 껐습니다.";
+        else if (item.completed) message = "설정을 저장했습니다. 미완료로 되돌리면 알림이 예약됩니다.";
+        else if (scheduled == 0) message = "설정한 알림 시점이 이미 지나 저장만 했습니다.";
+        else message = "개별 알림 " + scheduled + "개를 예약했습니다.";
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private String formatReminderSummary(TodoItem item) {
+        List<Integer> offsets = item.reminderOffsetList();
+        if (offsets.isEmpty()) return "알림 없음";
+        StringBuilder value = new StringBuilder("알림 ");
+        for (int i = 0; i < offsets.size(); i++) {
+            if (i > 0) value.append(" · ");
+            value.append(reminderLabel(offsets.get(i)));
+        }
+        return value.toString();
+    }
+
+    private String reminderLabel(int minutes) {
+        if (minutes == 0) return "일정 시간";
+        if (minutes % 10_080 == 0) return (minutes / 10_080) + "주 전";
+        if (minutes % 1_440 == 0) return (minutes / 1_440) + "일 전";
+        if (minutes % 60 == 0) return (minutes / 60) + "시간 전";
+        return minutes + "분 전";
+    }
+
     private void confirmDelete(TodoItem item) {
         new AlertDialog.Builder(this)
                 .setMessage("‘" + item.title + "’을 삭제할까요?")
@@ -589,13 +858,132 @@ public final class MainActivity extends Activity {
     private int countForDate(LocalDate date, boolean completed) {
         int count = 0;
         for (TodoItem item : items) {
-            if (item.completed == completed && dateOf(item).equals(date)) count++;
+            if (item.completed == completed && occursOnDate(item, date)) count++;
         }
         return count;
     }
 
+    private int countSingleDayForDate(LocalDate date, boolean completed) {
+        int count = 0;
+        for (TodoItem item : items) {
+            if (item.completed == completed && !isMultiDay(item) && occursOnDate(item, date)) count++;
+        }
+        return count;
+    }
+
+    private int countImportantForDate(LocalDate date) {
+        int count = 0;
+        for (TodoItem item : items) {
+            if (item.important && occursOnDate(item, date)) count++;
+        }
+        return count;
+    }
+
+    private boolean hasImportantSingleDay(LocalDate date, boolean completed) {
+        for (TodoItem item : items) {
+            if (item.completed == completed && item.important && !isMultiDay(item)
+                    && occursOnDate(item, date)) return true;
+        }
+        return false;
+    }
+
+    private boolean isMultiDay(TodoItem item) {
+        return item.multiDay || endDateOf(item).isAfter(dateOf(item));
+    }
+
+    private void addRangeLine(LinearLayout container, LocalDate date, boolean completed, int color) {
+        boolean present = false;
+        boolean important = false;
+        boolean continuesBefore = false;
+        boolean continuesAfter = false;
+        for (TodoItem item : items) {
+            if (item.completed != completed || !isMultiDay(item) || !occursOnDate(item, date)) continue;
+            present = true;
+            important |= item.important;
+            continuesBefore |= occursOnDate(item, date.minusDays(1));
+            continuesAfter |= occursOnDate(item, date.plusDays(1));
+        }
+        if (!present) return;
+
+        View line = new View(this);
+        int displayColor = important ? (completed ? BLUE : RED) : color;
+        line.setBackground(rangeDrawable(displayColor, continuesBefore, continuesAfter));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(5));
+        params.setMargins(continuesBefore ? 0 : dp(4), dp(1), continuesAfter ? 0 : dp(4), 0);
+        container.addView(line, params);
+    }
+
     private LocalDate dateOf(TodoItem item) {
         return Instant.ofEpochMilli(item.scheduledAt).atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
+    private LocalDate endDateOf(TodoItem item) {
+        long value = item.endAt > 0 ? item.endAt : item.scheduledAt;
+        return Instant.ofEpochMilli(value).atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
+    private boolean occursOnDate(TodoItem item, LocalDate date) {
+        LocalDate start = dateOf(item);
+        LocalDate end = endDateOf(item);
+        if (item.repeatFrequency == null || item.repeatFrequency.isBlank())
+            return !date.isBefore(start) && !date.isAfter(end);
+        if (date.isBefore(start)) return false;
+        if (item.repeatUntil > 0 && date.isAfter(Instant.ofEpochMilli(item.repeatUntil)
+                .atZone(ZoneId.systemDefault()).toLocalDate())) return false;
+
+        long span = Math.max(0, ChronoUnit.DAYS.between(start, end));
+        for (long offset = 0; offset <= span; offset++) {
+            LocalDate candidateStart = date.minusDays(offset);
+            if (isRepeatStart(item, start, candidateStart)) return true;
+        }
+        return false;
+    }
+
+    private boolean isRepeatStart(TodoItem item, LocalDate base, LocalDate candidate) {
+        if (candidate.isBefore(base)) return false;
+        int interval = Math.max(1, item.repeatInterval);
+        return switch (item.repeatFrequency) {
+            case "DAILY" -> ChronoUnit.DAYS.between(base, candidate) % interval == 0;
+            case "WEEKLY" -> {
+                LocalDate baseWeek = base.minusDays(base.getDayOfWeek().getValue() - 1L);
+                LocalDate candidateWeek = candidate.minusDays(candidate.getDayOfWeek().getValue() - 1L);
+                long weeks = ChronoUnit.WEEKS.between(baseWeek, candidateWeek);
+                boolean selectedDay = item.repeatDays == null || item.repeatDays.isBlank()
+                        ? candidate.getDayOfWeek() == base.getDayOfWeek()
+                        : item.repeatDays.contains(candidate.getDayOfWeek().name());
+                yield weeks >= 0 && weeks % interval == 0 && selectedDay;
+            }
+            case "MONTHLY" -> {
+                long months = ChronoUnit.MONTHS.between(YearMonth.from(base), YearMonth.from(candidate));
+                if (months < 0 || months % interval != 0) yield false;
+                if (item.repeatMonthDays != null && !item.repeatMonthDays.isBlank())
+                    yield containsCsvNumber(item.repeatMonthDays, candidate.getDayOfMonth());
+                if (item.repeatSetPosition != 0 && item.repeatDays != null && !item.repeatDays.isBlank()) {
+                    DayOfWeek day = candidate.getDayOfWeek();
+                    if (!item.repeatDays.contains(day.name())) yield false;
+                    LocalDate expected = item.repeatSetPosition > 0
+                            ? candidate.withDayOfMonth(1).with(TemporalAdjusters.dayOfWeekInMonth(item.repeatSetPosition, day))
+                            : candidate.with(TemporalAdjusters.lastInMonth(day));
+                    yield candidate.equals(expected);
+                }
+                yield candidate.getDayOfMonth() == Math.min(base.getDayOfMonth(), YearMonth.from(candidate).lengthOfMonth());
+            }
+            case "YEARLY" -> candidate.getMonth() == base.getMonth() &&
+                    candidate.getDayOfMonth() == base.getDayOfMonth() &&
+                    (candidate.getYear() - base.getYear()) % interval == 0;
+            default -> candidate.equals(base);
+        };
+    }
+
+    private boolean containsCsvNumber(String csv, int number) {
+        for (String value : csv.split(",")) {
+            try {
+                if (Integer.parseInt(value.trim()) == number) return true;
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return false;
     }
 
     private void sortItems() {
@@ -606,24 +994,64 @@ public final class MainActivity extends Activity {
         return new SimpleDateFormat("a h:mm", Locale.KOREAN).format(new Date(timestamp));
     }
 
-    private View legendItem(String label, int color, int background) {
+    private String formatSchedule(TodoItem item, boolean includeDate) {
+        LocalDate start = dateOf(item);
+        LocalDate end = endDateOf(item);
+        StringBuilder value = new StringBuilder();
+        if (includeDate) value.append(start.getMonthValue()).append("월 ").append(start.getDayOfMonth()).append("일");
+        if (item.multiDay && !end.equals(start)) {
+            if (!includeDate) value.append(start.getMonthValue()).append("월 ").append(start.getDayOfMonth()).append("일");
+            value.append(" ~ ");
+            value.append(end.getMonthValue()).append("월 ").append(end.getDayOfMonth()).append("일");
+            if (!includeDate) value.append(" · ");
+        }
+        if (includeDate) value.append(" · ");
+        if (item.allDay) value.append("하루 종일");
+        else {
+            value.append(formatTime(item.scheduledAt));
+            if (item.endAt > item.scheduledAt) value.append(" ~ ").append(formatTime(item.endAt));
+        }
+        return value.toString();
+    }
+
+    private String repeatLabel(TodoItem item) {
+        return switch (item.repeatFrequency) {
+            case "DAILY" -> item.repeatInterval == 1 ? "매일" : item.repeatInterval + "일마다";
+            case "WEEKLY" -> item.repeatInterval == 1 ? "매주" : item.repeatInterval + "주마다";
+            case "MONTHLY" -> "매월";
+            case "YEARLY" -> "매년";
+            default -> item.repeatFrequency;
+        };
+    }
+
+    private View legendItem(String label, int color) {
         LinearLayout item = horizontal();
-        TextView number = text("3", 11, color, true);
-        number.setGravity(Gravity.CENTER);
-        number.setBackground(rounded(background, 10, Color.TRANSPARENT));
-        item.addView(number, new LinearLayout.LayoutParams(dp(24), dp(21)));
+        View line = new View(this);
+        line.setBackground(rounded(color, 3, Color.TRANSPARENT));
+        item.addView(line, new LinearLayout.LayoutParams(dp(28), dp(6)));
         TextView text = text(label, 12, MUTED, false);
         text.setPadding(dp(6), 0, 0, 0);
         item.addView(text);
         return item;
     }
 
-    private View countBadge(int count, int color, int background) {
-        TextView badge = text(String.valueOf(count), 10, color, true);
+    private View countBadge(int count, int color, int background, boolean important) {
+        TextView badge = text(String.valueOf(count), 10, important ? Color.WHITE : color, true);
         badge.setGravity(Gravity.CENTER);
-        badge.setBackground(rounded(background, 9, Color.TRANSPARENT));
+        badge.setBackground(rounded(important ? color : background, 9,
+                important ? AMBER : Color.TRANSPARENT));
         badge.setLayoutParams(new LinearLayout.LayoutParams(dp(22), dp(20)));
         return badge;
+    }
+
+    private GradientDrawable rangeDrawable(int color, boolean continuesBefore, boolean continuesAfter) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        float radius = dp(3);
+        float left = continuesBefore ? 0 : radius;
+        float right = continuesAfter ? 0 : radius;
+        drawable.setCornerRadii(new float[]{left, left, right, right, right, right, left, left});
+        return drawable;
     }
 
     private GridLayout.LayoutParams gridParams(int row, int column, int height) {
@@ -719,6 +1147,64 @@ public final class MainActivity extends Activity {
             case "쇼핑" -> Color.rgb(249, 235, 252);
             default -> PURPLE_SOFT;
         };
+    }
+
+    private final class SwipeCalendarGrid extends GridLayout {
+        private final int swipeDistance = dp(42);
+        private float downX;
+        private float downY;
+        private boolean swiping;
+
+        SwipeCalendarGrid() {
+            super(MainActivity.this);
+            setClickable(true);
+        }
+
+        @Override
+        public boolean onInterceptTouchEvent(MotionEvent event) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                downX = event.getX();
+                downY = event.getY();
+                swiping = false;
+                return false;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                float dx = event.getX() - downX;
+                float dy = event.getY() - downY;
+                if (Math.abs(dx) >= swipeDistance && Math.abs(dx) > Math.abs(dy) * 1.2f) {
+                    swiping = true;
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                float dx = event.getX() - downX;
+                if (swiping && Math.abs(dx) >= swipeDistance) {
+                    int direction = dx < 0 ? 1 : -1;
+                    post(() -> moveVisibleMonth(direction));
+                }
+                swiping = false;
+                getParent().requestDisallowInterceptTouchEvent(false);
+                return true;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                swiping = false;
+                getParent().requestDisallowInterceptTouchEvent(false);
+                return true;
+            }
+            return swiping || super.onTouchEvent(event);
+        }
+
+        @Override
+        public boolean performClick() {
+            super.performClick();
+            return true;
+        }
     }
 
     private int dp(int value) {

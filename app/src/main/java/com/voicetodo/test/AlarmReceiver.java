@@ -19,15 +19,27 @@ public final class AlarmReceiver extends BroadcastReceiver {
 
         String id = intent.getStringExtra("id");
         String title = intent.getStringExtra("title");
+        boolean important = intent.getBooleanExtra("important", false);
+        int reminderMinutes = intent.getIntExtra("reminderMinutes", 0);
         Notification notification = new Notification.Builder(context, NotificationHelper.CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_popup_reminder)
-                .setContentTitle("톡todo 알림")
-                .setContentText(title == null ? "예정된 할 일이 있어요." : title)
+                .setContentTitle(important ? "톡todo · 중요 일정" : "톡todo 알림")
+                .setContentText(title == null ? "예정된 할 일이 있어요."
+                        : (important ? "★ " : "") + title)
+                .setSubText(reminderLabel(reminderMinutes))
                 .setContentIntent(contentIntent)
                 .setAutoCancel(true)
                 .setCategory(Notification.CATEGORY_REMINDER)
                 .build();
         context.getSystemService(NotificationManager.class)
                 .notify(id == null ? 1 : id.hashCode(), notification);
+    }
+
+    private String reminderLabel(int minutes) {
+        if (minutes == 0) return "일정 시간";
+        if (minutes % 10_080 == 0) return (minutes / 10_080) + "주 전";
+        if (minutes % 1_440 == 0) return (minutes / 1_440) + "일 전";
+        if (minutes % 60 == 0) return (minutes / 60) + "시간 전";
+        return minutes + "분 전";
     }
 }
