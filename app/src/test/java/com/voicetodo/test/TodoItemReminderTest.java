@@ -1,10 +1,16 @@
 package com.voicetodo.test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import org.junit.Test;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 
 public final class TodoItemReminderTest {
@@ -27,6 +33,38 @@ public final class TodoItemReminderTest {
 
         assertTrue(item.reminderOffsetList().isEmpty());
         assertEquals("", item.reminderOffsets);
+    }
+
+    @Test
+    public void editingUpdatesTitleAndSchedule() {
+        TodoItem item = item("30");
+        ZoneId zoneId = ZoneId.of("Asia/Seoul");
+
+        item.applyEdit("월간 보고", LocalDate.of(2026, 8, 24), LocalTime.of(10, 30),
+                LocalDate.of(2026, 8, 25), LocalTime.of(11, 0), false, zoneId);
+
+        assertEquals("월간 보고", item.title);
+        assertEquals(LocalDate.of(2026, 8, 24),
+                Instant.ofEpochMilli(item.scheduledAt).atZone(zoneId).toLocalDate());
+        assertEquals(LocalTime.of(10, 30),
+                Instant.ofEpochMilli(item.scheduledAt).atZone(zoneId).toLocalTime());
+        assertEquals(LocalDate.of(2026, 8, 25),
+                Instant.ofEpochMilli(item.endAt).atZone(zoneId).toLocalDate());
+        assertTrue(item.multiDay);
+        assertFalse(item.allDay);
+    }
+
+    @Test
+    public void editingRejectsAnEndBeforeTheStart() {
+        TodoItem item = item("");
+        try {
+            item.applyEdit("잘못된 일정", LocalDate.of(2026, 8, 25), LocalTime.of(10, 0),
+                    LocalDate.of(2026, 8, 24), LocalTime.of(10, 0), false,
+                    ZoneId.of("Asia/Seoul"));
+            fail("Expected invalid edit to be rejected");
+        } catch (IllegalArgumentException expected) {
+            assertEquals("종료일은 시작일보다 빠를 수 없습니다.", expected.getMessage());
+        }
     }
 
     private TodoItem item(String offsets) {

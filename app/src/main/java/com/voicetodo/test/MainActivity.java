@@ -3,6 +3,8 @@ package com.voicetodo.test;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DatePickerDialog;
+import android.app.TimePickerDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -24,6 +26,7 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
@@ -35,6 +38,7 @@ import java.text.SimpleDateFormat;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.TextStyle;
@@ -864,6 +868,12 @@ public final class MainActivity extends Activity {
         toggle.setOnClickListener(v -> toggleStatus(item));
         actions.addView(toggle, new LinearLayout.LayoutParams(0, dp(42), 1f));
 
+        Button edit = button("수정", Color.rgb(239, 244, 255), BLUE);
+        edit.setOnClickListener(v -> showEditDialog(item));
+        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
+        editParams.setMarginStart(dp(8));
+        actions.addView(edit, editParams);
+
         Button reminderButton = button("알림", PURPLE_SOFT, PURPLE);
         reminderButton.setOnClickListener(v -> showReminderSettings(item));
         LinearLayout.LayoutParams reminderParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
@@ -897,6 +907,135 @@ public final class MainActivity extends Activity {
         renderAll();
         Toast.makeText(this, item.important ? "중요 일정으로 표시했습니다." : "일반 일정으로 변경했습니다.",
                 Toast.LENGTH_SHORT).show();
+    }
+
+    private void showEditDialog(TodoItem item) {
+        ZoneId zoneId = ZoneId.systemDefault();
+        LocalDate[] dates = {dateOf(item), endDateOf(item)};
+        LocalTime[] times = {
+                Instant.ofEpochMilli(item.scheduledAt).atZone(zoneId).toLocalTime().withSecond(0).withNano(0),
+                Instant.ofEpochMilli(item.endAt > 0 ? item.endAt : item.scheduledAt)
+                        .atZone(zoneId).toLocalTime().withSecond(0).withNano(0)
+        };
+
+        LinearLayout form = vertical();
+        form.setPadding(dp(22), dp(8), dp(22), dp(4));
+
+        TextView titleLabel = text("제목", 12, MUTED, true);
+        form.addView(titleLabel, matchWrap());
+        EditText titleInput = new EditText(this);
+        titleInput.setText(item.title);
+        titleInput.setTextSize(17);
+        titleInput.setSingleLine(true);
+        titleInput.setSelectAllOnFocus(true);
+        titleInput.setPadding(dp(4), dp(4), dp(4), dp(8));
+        form.addView(titleInput, matchWrap());
+
+        TextView dateLabel = text("날짜", 12, MUTED, true);
+        dateLabel.setPadding(0, dp(12), 0, dp(4));
+        form.addView(dateLabel, matchWrap());
+        Button startDateButton = button("", PURPLE_SOFT, PURPLE);
+        Button endDateButton = button("", Color.rgb(246, 246, 249), INK);
+        form.addView(startDateButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        LinearLayout.LayoutParams endDateParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        endDateParams.setMargins(0, dp(6), 0, 0);
+        form.addView(endDateButton, endDateParams);
+
+        CheckBox allDayCheck = new CheckBox(this);
+        allDayCheck.setText("하루 종일");
+        allDayCheck.setTextSize(14);
+        allDayCheck.setChecked(item.allDay);
+        allDayCheck.setPadding(0, dp(8), 0, dp(4));
+        form.addView(allDayCheck, matchWrap());
+
+        TextView timeLabel = text("시간", 12, MUTED, true);
+        form.addView(timeLabel, matchWrap());
+        LinearLayout timeRow = horizontal();
+        Button startTimeButton = button("", PURPLE_SOFT, PURPLE);
+        Button endTimeButton = button("", Color.rgb(246, 246, 249), INK);
+        timeRow.addView(startTimeButton, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        LinearLayout.LayoutParams endTimeParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        endTimeParams.setMarginStart(dp(8));
+        timeRow.addView(endTimeButton, endTimeParams);
+        form.addView(timeRow, matchWrap());
+
+        Runnable updateLabels = () -> {
+            startDateButton.setText("시작일 · " + editDateLabel(dates[0]));
+            endDateButton.setText("종료일 · " + editDateLabel(dates[1]));
+            startTimeButton.setText("시작 · " + editTimeLabel(times[0]));
+            endTimeButton.setText("종료 · " + editTimeLabel(times[1]));
+        };
+        updateLabels.run();
+
+        startDateButton.setOnClickListener(v -> new DatePickerDialog(this, (picker, year, month, day) -> {
+            dates[0] = LocalDate.of(year, month + 1, day);
+            if (dates[1].isBefore(dates[0])) dates[1] = dates[0];
+            updateLabels.run();
+        }, dates[0].getYear(), dates[0].getMonthValue() - 1, dates[0].getDayOfMonth()).show());
+        endDateButton.setOnClickListener(v -> new DatePickerDialog(this, (picker, year, month, day) -> {
+            dates[1] = LocalDate.of(year, month + 1, day);
+            updateLabels.run();
+        }, dates[1].getYear(), dates[1].getMonthValue() - 1, dates[1].getDayOfMonth()).show());
+        startTimeButton.setOnClickListener(v -> new TimePickerDialog(this, (picker, hour, minute) -> {
+            times[0] = LocalTime.of(hour, minute);
+            updateLabels.run();
+        }, times[0].getHour(), times[0].getMinute(), false).show());
+        endTimeButton.setOnClickListener(v -> new TimePickerDialog(this, (picker, hour, minute) -> {
+            times[1] = LocalTime.of(hour, minute);
+            updateLabels.run();
+        }, times[1].getHour(), times[1].getMinute(), false).show());
+        allDayCheck.setOnCheckedChangeListener((buttonView, checked) -> {
+            int visibility = checked ? View.GONE : View.VISIBLE;
+            timeLabel.setVisibility(visibility);
+            timeRow.setVisibility(visibility);
+        });
+        int initialTimeVisibility = item.allDay ? View.GONE : View.VISIBLE;
+        timeLabel.setVisibility(initialTimeVisibility);
+        timeRow.setVisibility(initialTimeVisibility);
+
+        ScrollView formScroll = new ScrollView(this);
+        formScroll.addView(form);
+        AlertDialog editDialog = new AlertDialog.Builder(this)
+                .setTitle("일정 수정")
+                .setView(formScroll)
+                .setNegativeButton("취소", null)
+                .setPositiveButton("저장", null)
+                .create();
+        editDialog.setOnShowListener(ignored -> editDialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    try {
+                        item.applyEdit(titleInput.getText().toString(), dates[0], times[0],
+                                dates[1], times[1], allDayCheck.isChecked(), zoneId);
+                    } catch (IllegalArgumentException error) {
+                        if (titleInput.getText().toString().trim().isBlank()) {
+                            titleInput.setError(error.getMessage());
+                            titleInput.requestFocus();
+                        } else {
+                            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+                        }
+                        return;
+                    }
+                    NotificationHelper.schedule(this, item);
+                    sortItems();
+                    store.save(items);
+                    selectedDate = dates[0];
+                    visibleMonth = YearMonth.from(selectedDate);
+                    renderAll();
+                    editDialog.dismiss();
+                    Toast.makeText(this, "일정을 수정했습니다.", Toast.LENGTH_SHORT).show();
+                }));
+        editDialog.show();
+    }
+
+    private String editDateLabel(LocalDate date) {
+        return String.format(Locale.KOREAN, "%04d.%02d.%02d", date.getYear(),
+                date.getMonthValue(), date.getDayOfMonth());
+    }
+
+    private String editTimeLabel(LocalTime time) {
+        return String.format(Locale.KOREAN, "%02d:%02d", time.getHour(), time.getMinute());
     }
 
     private void showReminderSettings(TodoItem item) {

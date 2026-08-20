@@ -4,6 +4,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -174,6 +176,32 @@ final class TodoItem {
         for (Integer value : sorted) values.add(String.valueOf(value));
         reminderOffsets = values.toString();
         reminderMinutes = sorted.isEmpty() ? 0 : sorted.get(0);
+    }
+
+    void applyEdit(String editedTitle, LocalDate startDate, LocalTime startTime,
+                   LocalDate endDate, LocalTime endTime, boolean editedAllDay, ZoneId zoneId) {
+        String cleanedTitle = editedTitle == null ? "" : editedTitle.trim();
+        if (cleanedTitle.isBlank()) throw new IllegalArgumentException("제목을 입력해 주세요.");
+        if (startDate == null || endDate == null || zoneId == null)
+            throw new IllegalArgumentException("날짜를 확인해 주세요.");
+        if (endDate.isBefore(startDate))
+            throw new IllegalArgumentException("종료일은 시작일보다 빠를 수 없습니다.");
+
+        LocalTime effectiveStart = editedAllDay ? LocalTime.of(9, 0) : startTime;
+        LocalTime effectiveEnd = editedAllDay ? LocalTime.of(9, 0) : endTime;
+        if (effectiveStart == null || effectiveEnd == null)
+            throw new IllegalArgumentException("시간을 확인해 주세요.");
+
+        long editedStartAt = startDate.atTime(effectiveStart).atZone(zoneId).toInstant().toEpochMilli();
+        long editedEndAt = endDate.atTime(effectiveEnd).atZone(zoneId).toInstant().toEpochMilli();
+        if (editedEndAt < editedStartAt)
+            throw new IllegalArgumentException("종료 시간은 시작 시간보다 빠를 수 없습니다.");
+
+        title = cleanedTitle;
+        scheduledAt = editedStartAt;
+        endAt = editedEndAt;
+        allDay = editedAllDay;
+        multiDay = endDate.isAfter(startDate);
     }
 
     private static boolean hasImportantKeyword(String source) {
