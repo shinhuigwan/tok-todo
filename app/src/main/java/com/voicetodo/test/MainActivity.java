@@ -20,6 +20,7 @@ import android.text.style.StrikethroughSpan;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
@@ -306,10 +307,49 @@ public final class MainActivity extends Activity {
         importanceLegend.setGravity(Gravity.CENTER);
         importanceLegend.setPadding(0, dp(5), 0, 0);
         calendarPanel.addView(importanceLegend, matchWrap());
-        calendarGestureHint = text("↓ 아래로 당겨 일정 제목 보기", 11, MUTED, true);
+        calendarGestureHint = text("━\n아래로 당겨 일정 제목 보기", 11, MUTED, true);
         calendarGestureHint.setGravity(Gravity.CENTER);
-        calendarGestureHint.setPadding(0, dp(5), 0, dp(1));
+        calendarGestureHint.setMinHeight(dp(48));
+        calendarGestureHint.setPadding(0, dp(3), 0, dp(3));
         calendarGestureHint.setOnClickListener(v -> setCalendarExpanded(!calendarExpanded));
+        calendarGestureHint.setOnTouchListener(new View.OnTouchListener() {
+            private float downY;
+            private boolean moved;
+
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                int action = event.getActionMasked();
+                if (action == MotionEvent.ACTION_DOWN) {
+                    downY = event.getRawY();
+                    moved = false;
+                    view.setPressed(true);
+                    view.getParent().requestDisallowInterceptTouchEvent(true);
+                    return true;
+                }
+                if (action == MotionEvent.ACTION_MOVE) {
+                    moved = moved || Math.abs(event.getRawY() - downY) >= dp(8);
+                    return true;
+                }
+                if (action == MotionEvent.ACTION_UP) {
+                    float distance = event.getRawY() - downY;
+                    view.setPressed(false);
+                    view.getParent().requestDisallowInterceptTouchEvent(false);
+                    if (Math.abs(distance) >= dp(28)) {
+                        if (distance > 0 && !calendarExpanded) setCalendarExpanded(true);
+                        else if (distance < 0 && calendarExpanded) setCalendarExpanded(false);
+                    } else if (!moved) {
+                        view.performClick();
+                    }
+                    return true;
+                }
+                if (action == MotionEvent.ACTION_CANCEL) {
+                    view.setPressed(false);
+                    view.getParent().requestDisallowInterceptTouchEvent(false);
+                    return true;
+                }
+                return false;
+            }
+        });
         calendarPanel.addView(calendarGestureHint, matchWrap());
 
         LinearLayout detailHeader = horizontal();
@@ -603,8 +643,8 @@ public final class MainActivity extends Activity {
         monthTitle.setText(visibleMonth.getMonthValue() + "월 ▾");
         if (calendarGestureHint != null) {
             calendarGestureHint.setText(calendarExpanded
-                    ? "↑ 위로 밀어 숫자 보기로 접기"
-                    : "↓ 아래로 당겨 일정 제목 보기");
+                    ? "━\n위로 밀어 숫자 보기로 접기"
+                    : "━\n아래로 당겨 일정 제목 보기");
         }
         calendarGrid.removeAllViews();
 
@@ -1225,6 +1265,7 @@ public final class MainActivity extends Activity {
 
     private final class SwipeCalendarGrid extends GridLayout {
         private final int swipeDistance = dp(42);
+        private final int directionLockDistance = ViewConfiguration.get(MainActivity.this).getScaledTouchSlop();
         private float downX;
         private float downY;
         private int gesture;
@@ -1240,22 +1281,18 @@ public final class MainActivity extends Activity {
                 downX = event.getX();
                 downY = event.getY();
                 gesture = 0;
-                getParent().requestDisallowInterceptTouchEvent(true);
                 return false;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
                 float dx = event.getX() - downX;
                 float dy = event.getY() - downY;
-                if (Math.abs(dx) >= swipeDistance && Math.abs(dx) > Math.abs(dy) * 1.2f) {
+                if (gesture == 1) return true;
+                if (Math.abs(dx) >= directionLockDistance && Math.abs(dx) > Math.abs(dy) * 1.2f) {
                     gesture = 1;
+                    getParent().requestDisallowInterceptTouchEvent(true);
                     return true;
                 }
-                if (Math.abs(dy) >= swipeDistance && Math.abs(dy) > Math.abs(dx) * 1.2f) {
-                    boolean canToggle = (dy > 0 && !calendarExpanded) || (dy < 0 && calendarExpanded);
-                    if (canToggle) {
-                        gesture = 2;
-                        return true;
-                    }
+                if (Math.abs(dy) >= directionLockDistance && Math.abs(dy) > Math.abs(dx)) {
                     getParent().requestDisallowInterceptTouchEvent(false);
                 }
             }
@@ -1274,9 +1311,6 @@ public final class MainActivity extends Activity {
                 if (gesture == 1 && Math.abs(dx) >= swipeDistance) {
                     int direction = dx < 0 ? 1 : -1;
                     post(() -> moveVisibleMonth(direction));
-                } else if (gesture == 2 && Math.abs(dy) >= swipeDistance) {
-                    boolean expand = dy > 0;
-                    post(() -> setCalendarExpanded(expand));
                 }
                 gesture = 0;
                 getParent().requestDisallowInterceptTouchEvent(false);
