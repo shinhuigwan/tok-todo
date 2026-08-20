@@ -53,6 +53,20 @@ public final class KoreanTodoParserTest {
     }
 
     @Test
+    public void reportLabelCanProvideTheConciseTitle() {
+        String source = "보고: 8월 월간 업무 실적\n"
+                + "보고일시: 2026.8.24.(월) 10시까지\n"
+                + "담당: 기획팀";
+
+        ParsedCalendarEvent event = parse(source);
+
+        assertEquals("8월 월간 업무 실적", event.title);
+        assertEquals(LocalDate.of(2026, 8, 24), event.startDate);
+        assertEquals(LocalTime.of(10, 0), event.startTime);
+        assertEquals("업무", event.category);
+    }
+
+    @Test
     public void explicitStructuredTitleTakesPriority() {
         ParsedCalendarEvent event = parse("제목: 하반기 운영위원회\n일시: 2026.9.2. 14시\n장소: 회의실");
         assertEquals("하반기 운영위원회", event.title);

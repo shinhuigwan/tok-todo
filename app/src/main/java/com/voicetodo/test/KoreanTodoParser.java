@@ -56,7 +56,7 @@ final class KoreanTodoParser {
     private static final Pattern REMINDER = Pattern.compile("(\\d+)\\s*(분|시간|일)\\s*전");
     private static final Pattern EXPLICIT_STRUCTURED_TITLE = Pattern.compile(
             "(?im)(?:^|\\R)\\s*(?:[가-힣A-Z]\\s*[.)]|\\d+\\s*[.)]|[-•])?\\s*" +
-                    "(?:제목|일정명|행사명|회의명|안건)\\s*[:：]\\s*([^\\r\\n]+)");
+                    "(?:제목|일정명|행사명|회의명|안건|보고)\\s*[:：]\\s*([^\\r\\n]+)");
     private static final Pattern STRUCTURED_LABEL = Pattern.compile(
             "(?m)(?:^|\\R)\\s*(?:[가-힣A-Z]\\s*[.)]|\\d+\\s*[.)]|[-•])?\\s*" +
                     "([가-힣A-Za-z][가-힣A-Za-z0-9 ]{1,18})\\s*[:：]");
