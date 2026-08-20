@@ -40,10 +40,12 @@ public final class TodoItemReminderTest {
         TodoItem item = item("30");
         ZoneId zoneId = ZoneId.of("Asia/Seoul");
 
-        item.applyEdit("월간 보고", LocalDate.of(2026, 8, 24), LocalTime.of(10, 30),
+        item.applyEdit("월간 보고", "8월 실적과 다음 달 계획 정리",
+                LocalDate.of(2026, 8, 24), LocalTime.of(10, 30),
                 LocalDate.of(2026, 8, 25), LocalTime.of(11, 0), false, zoneId);
 
         assertEquals("월간 보고", item.title);
+        assertEquals("8월 실적과 다음 달 계획 정리", item.originalVoiceText);
         assertEquals(LocalDate.of(2026, 8, 24),
                 Instant.ofEpochMilli(item.scheduledAt).atZone(zoneId).toLocalDate());
         assertEquals(LocalTime.of(10, 30),
@@ -58,7 +60,7 @@ public final class TodoItemReminderTest {
     public void editingRejectsAnEndBeforeTheStart() {
         TodoItem item = item("");
         try {
-            item.applyEdit("잘못된 일정", LocalDate.of(2026, 8, 25), LocalTime.of(10, 0),
+            item.applyEdit("잘못된 일정", "내용", LocalDate.of(2026, 8, 25), LocalTime.of(10, 0),
                     LocalDate.of(2026, 8, 24), LocalTime.of(10, 0), false,
                     ZoneId.of("Asia/Seoul"));
             fail("Expected invalid edit to be rejected");

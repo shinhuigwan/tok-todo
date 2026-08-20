@@ -910,6 +910,23 @@ public final class MainActivity extends Activity {
         titleInput.setPadding(dp(4), dp(4), dp(4), dp(8));
         form.addView(titleInput, matchWrap());
 
+        TextView contentLabel = text("내용", 12, MUTED, true);
+        contentLabel.setPadding(0, dp(12), 0, dp(4));
+        form.addView(contentLabel, matchWrap());
+        EditText contentInput = new EditText(this);
+        contentInput.setText(item.originalVoiceText);
+        contentInput.setHint("메모나 상세 내용을 입력하세요");
+        contentInput.setTextSize(15);
+        contentInput.setGravity(Gravity.TOP | Gravity.START);
+        contentInput.setMinLines(3);
+        contentInput.setMaxLines(6);
+        contentInput.setHorizontallyScrolling(false);
+        contentInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        contentInput.setPadding(dp(4), dp(6), dp(4), dp(8));
+        form.addView(contentInput, matchWrap());
+
         TextView dateLabel = text("날짜", 12, MUTED, true);
         dateLabel.setPadding(0, dp(12), 0, dp(4));
         form.addView(dateLabel, matchWrap());
@@ -985,7 +1002,8 @@ public final class MainActivity extends Activity {
         editDialog.setOnShowListener(ignored -> editDialog.getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(v -> {
                     try {
-                        item.applyEdit(titleInput.getText().toString(), dates[0], times[0],
+                        item.applyEdit(titleInput.getText().toString(), contentInput.getText().toString(),
+                                dates[0], times[0],
                                 dates[1], times[1], allDayCheck.isChecked(), zoneId);
                     } catch (IllegalArgumentException error) {
                         if (titleInput.getText().toString().trim().isBlank()) {

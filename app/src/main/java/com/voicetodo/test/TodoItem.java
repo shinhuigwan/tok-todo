@@ -178,7 +178,7 @@ final class TodoItem {
         reminderMinutes = sorted.isEmpty() ? 0 : sorted.get(0);
     }
 
-    void applyEdit(String editedTitle, LocalDate startDate, LocalTime startTime,
+    void applyEdit(String editedTitle, String editedContent, LocalDate startDate, LocalTime startTime,
                    LocalDate endDate, LocalTime endTime, boolean editedAllDay, ZoneId zoneId) {
         String cleanedTitle = editedTitle == null ? "" : editedTitle.trim();
         if (cleanedTitle.isBlank()) throw new IllegalArgumentException("제목을 입력해 주세요.");
@@ -198,6 +198,7 @@ final class TodoItem {
             throw new IllegalArgumentException("종료 시간은 시작 시간보다 빠를 수 없습니다.");
 
         title = cleanedTitle;
+        originalVoiceText = editedContent == null ? "" : editedContent.trim();
         scheduledAt = editedStartAt;
         endAt = editedEndAt;
         allDay = editedAllDay;
