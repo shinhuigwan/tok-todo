@@ -95,7 +95,6 @@ public final class MainActivity extends Activity {
     private TextView calendarGestureHint;
     private TextView selectedDateTitle;
     private TextView selectedDateSummary;
-    private TextView headerSummary;
     private LinearLayout detailList;
     private EditText searchInput;
     private LinearLayout searchSection;
@@ -144,12 +143,9 @@ public final class MainActivity extends Activity {
         LinearLayout heading = vertical();
         TextView eyebrow = text("톡todo", 13, PURPLE, true);
         heading.addView(eyebrow);
-        TextView title = text("오늘을 말로 정리하세요", 27, INK, true);
+        TextView title = text("톡하면, 일정이 정리돼요", 27, INK, true);
         title.setPadding(0, dp(4), 0, 0);
         heading.addView(title);
-        headerSummary = text("", 14, MUTED, false);
-        headerSummary.setPadding(0, dp(6), 0, 0);
-        heading.addView(headerSummary);
         top.addView(heading, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView todayBadge = text("오늘", 13, PURPLE, true);
@@ -481,7 +477,6 @@ public final class MainActivity extends Activity {
     }
 
     private void renderAll() {
-        renderHeader();
         renderCalendar();
         renderSelectedDate();
         if (!activeSearchQuery.isEmpty()) renderSearchResults();
@@ -581,22 +576,6 @@ public final class MainActivity extends Activity {
             changed = true;
         }
         if (changed) store.save(items);
-    }
-
-    private void renderHeader() {
-        int todayOpen = 0;
-        int allOpen = 0;
-        int importantOpen = 0;
-        LocalDate today = LocalDate.now();
-        for (TodoItem item : items) {
-            if (!item.completed) {
-                allOpen++;
-                if (item.important) importantOpen++;
-                if (occursOnDate(item, today)) todayOpen++;
-            }
-        }
-        headerSummary.setText("오늘 " + todayOpen + "개 · 중요 " + importantOpen
-                + "개 · 전체 미완료 " + allOpen + "개");
     }
 
     private void moveVisibleMonth(int amount) {
