@@ -37,6 +37,28 @@ public final class KoreanTodoParserTest {
     }
 
     @Test
+    public void structuredNoticeIsReducedToAConciseTitle() {
+        String source = "가. 입금금액 : 도지회 200만원, 시 단위 지부 20만원, 군 단위 지부 10만원\n"
+                + "나. 입금날짜 : 2026.8.24.(월) 10시까지\n"
+                + "다. 입금계좌 : 우체국 100-0001-92432 전북지회";
+
+        ParsedCalendarEvent event = parse(source);
+
+        assertEquals(LocalDate.of(2026, 8, 24), event.startDate);
+        assertEquals(LocalTime.of(10, 0), event.startTime);
+        assertEquals("입금 마감", event.title);
+        assertEquals(ParsedCalendarEvent.EventType.DEADLINE, event.eventType);
+        assertEquals("업무", event.category);
+        assertEquals(source, event.originalText);
+    }
+
+    @Test
+    public void explicitStructuredTitleTakesPriority() {
+        ParsedCalendarEvent event = parse("제목: 하반기 운영위원회\n일시: 2026.9.2. 14시\n장소: 회의실");
+        assertEquals("하반기 운영위원회", event.title);
+    }
+
+    @Test
     public void nextWeekWithoutSpaceAnd24HourTime() {
         ParsedCalendarEvent event = parse("다음주 금요일 18시 30분 월보고 마감");
         assertEquals(LocalDate.of(2026, 8, 28), event.startDate);

@@ -15,6 +15,7 @@ import android.speech.RecognizerIntent;
 import android.text.InputType;
 import android.text.SpannableString;
 import android.text.Spanned;
+import android.text.TextUtils;
 import android.text.style.StrikethroughSpan;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -86,6 +87,7 @@ public final class MainActivity extends Activity {
     private GridLayout calendarGrid;
     private TextView yearTitle;
     private TextView monthTitle;
+    private TextView calendarGestureHint;
     private TextView selectedDateTitle;
     private TextView selectedDateSummary;
     private TextView headerSummary;
@@ -95,6 +97,7 @@ public final class MainActivity extends Activity {
     private TextView searchResultTitle;
     private LinearLayout searchResultList;
     private String activeSearchQuery = "";
+    private boolean calendarExpanded;
     private YearMonth visibleMonth = YearMonth.now();
     private LocalDate selectedDate = LocalDate.now();
 
@@ -105,6 +108,7 @@ public final class MainActivity extends Activity {
         NotificationHelper.scheduleNextDailySummary(this);
         store = new TodoStore(this);
         items.addAll(store.load());
+        migrateStoredTitles();
         sortItems();
         setContentView(buildScreen());
         renderAll();
@@ -302,6 +306,11 @@ public final class MainActivity extends Activity {
         importanceLegend.setGravity(Gravity.CENTER);
         importanceLegend.setPadding(0, dp(5), 0, 0);
         calendarPanel.addView(importanceLegend, matchWrap());
+        calendarGestureHint = text("↓ 아래로 당겨 일정 제목 보기", 11, MUTED, true);
+        calendarGestureHint.setGravity(Gravity.CENTER);
+        calendarGestureHint.setPadding(0, dp(5), 0, dp(1));
+        calendarGestureHint.setOnClickListener(v -> setCalendarExpanded(!calendarExpanded));
+        calendarPanel.addView(calendarGestureHint, matchWrap());
 
         LinearLayout detailHeader = horizontal();
         detailHeader.setPadding(dp(2), dp(22), dp(2), dp(10));
@@ -516,6 +525,20 @@ public final class MainActivity extends Activity {
         return card;
     }
 
+    private void migrateStoredTitles() {
+        boolean changed = false;
+        for (TodoItem item : items) {
+            if (item.title == null || item.title.length() <= 36 || item.originalVoiceText == null
+                    || !item.originalVoiceText.matches("(?s).*[:：].*")) continue;
+            String summarized = KoreanTodoParser.summarizeStoredTitle(item.originalVoiceText, item.title);
+            if (summarized.isBlank() || summarized.equals(item.title)) continue;
+            item.title = summarized;
+            if (!item.completed) NotificationHelper.schedule(this, item);
+            changed = true;
+        }
+        if (changed) store.save(items);
+    }
+
     private void renderHeader() {
         int todayOpen = 0;
         int allOpen = 0;
@@ -578,6 +601,11 @@ public final class MainActivity extends Activity {
     private void renderCalendar() {
         yearTitle.setText(visibleMonth.getYear() + "년 ▾");
         monthTitle.setText(visibleMonth.getMonthValue() + "월 ▾");
+        if (calendarGestureHint != null) {
+            calendarGestureHint.setText(calendarExpanded
+                    ? "↑ 위로 밀어 숫자 보기로 접기"
+                    : "↓ 아래로 당겨 일정 제목 보기");
+        }
         calendarGrid.removeAllViews();
 
         String[] weekdays = {"일", "월", "화", "수", "목", "금", "토"};
@@ -591,16 +619,17 @@ public final class MainActivity extends Activity {
         LocalDate first = visibleMonth.atDay(1);
         int firstColumn = first.getDayOfWeek().getValue() % 7;
         int length = visibleMonth.lengthOfMonth();
+        int cellHeight = dp(calendarExpanded ? 118 : 66);
         for (int slot = 0; slot < 42; slot++) {
             int row = slot / 7 + 1;
             int column = slot % 7;
             int day = slot - firstColumn + 1;
             if (day < 1 || day > length) {
-                calendarGrid.addView(new TextView(this), gridParams(row, column, dp(66)));
+                calendarGrid.addView(new TextView(this), gridParams(row, column, cellHeight));
                 continue;
             }
             LocalDate date = visibleMonth.atDay(day);
-            calendarGrid.addView(buildDayCell(date, column), gridParams(row, column, dp(66)));
+            calendarGrid.addView(buildDayCell(date, column), gridParams(row, column, cellHeight));
         }
     }
 
@@ -611,7 +640,7 @@ public final class MainActivity extends Activity {
         int background = selected ? PURPLE_SOFT : SURFACE;
 
         LinearLayout cell = vertical();
-        cell.setGravity(Gravity.CENTER);
+        cell.setGravity(calendarExpanded ? Gravity.TOP | Gravity.CENTER_HORIZONTAL : Gravity.CENTER);
         cell.setPadding(dp(2), dp(4), dp(2), dp(4));
         cell.setBackground(rounded(background, 13, stroke));
         cell.setOnClickListener(v -> {
@@ -624,6 +653,11 @@ public final class MainActivity extends Activity {
         TextView number = text(String.valueOf(date.getDayOfMonth()), 14, dayColor, selected || today);
         number.setGravity(Gravity.CENTER);
         cell.addView(number, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
+
+        if (calendarExpanded) {
+            addExpandedCalendarItems(cell, date);
+            return cell;
+        }
 
         int open = countSingleDayForDate(date, false);
         int completed = countSingleDayForDate(date, true);
@@ -645,6 +679,46 @@ public final class MainActivity extends Activity {
         addRangeLine(rangeLines, date, true, BLUE_RANGE);
         cell.addView(rangeLines, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(14)));
         return cell;
+    }
+
+    private void addExpandedCalendarItems(LinearLayout cell, LocalDate date) {
+        List<TodoItem> dayItems = new ArrayList<>();
+        for (TodoItem item : items) {
+            if (occursOnDate(item, date)) dayItems.add(item);
+        }
+        dayItems.sort(Comparator.comparing((TodoItem item) -> !item.important)
+                .thenComparing(item -> item.completed)
+                .thenComparingLong(item -> item.scheduledAt));
+
+        int visible = dayItems.size() > 3 ? 2 : Math.min(3, dayItems.size());
+        for (int index = 0; index < visible; index++) {
+            TodoItem item = dayItems.get(index);
+            String prefix = item.important ? "★ " : (item.completed ? "✓ " : "");
+            TextView title = text(prefix + item.title, 9, item.completed ? BLUE : RED, true);
+            title.setSingleLine(true);
+            title.setEllipsize(TextUtils.TruncateAt.END);
+            title.setGravity(Gravity.CENTER_VERTICAL);
+            title.setPadding(dp(3), 0, dp(3), 0);
+            title.setBackground(rounded(item.completed ? BLUE_SOFT : RED_SOFT, 5,
+                    item.important ? AMBER : Color.TRANSPARENT));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(19));
+            params.setMargins(0, dp(2), 0, 0);
+            cell.addView(title, params);
+        }
+        if (dayItems.size() > visible) {
+            TextView more = text("+" + (dayItems.size() - visible) + "개", 9, MUTED, true);
+            more.setGravity(Gravity.CENTER);
+            cell.addView(more, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(17)));
+        }
+    }
+
+    private void setCalendarExpanded(boolean expanded) {
+        if (calendarExpanded == expanded) return;
+        calendarExpanded = expanded;
+        renderCalendar();
+        calendarGrid.announceForAccessibility(expanded ? "일정 제목 보기를 펼쳤습니다" : "숫자 보기를 표시합니다");
     }
 
     private void renderSelectedDate() {
@@ -1153,7 +1227,7 @@ public final class MainActivity extends Activity {
         private final int swipeDistance = dp(42);
         private float downX;
         private float downY;
-        private boolean swiping;
+        private int gesture;
 
         SwipeCalendarGrid() {
             super(MainActivity.this);
@@ -1165,17 +1239,29 @@ public final class MainActivity extends Activity {
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 downX = event.getX();
                 downY = event.getY();
-                swiping = false;
+                gesture = 0;
+                getParent().requestDisallowInterceptTouchEvent(true);
                 return false;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
                 float dx = event.getX() - downX;
                 float dy = event.getY() - downY;
                 if (Math.abs(dx) >= swipeDistance && Math.abs(dx) > Math.abs(dy) * 1.2f) {
-                    swiping = true;
-                    getParent().requestDisallowInterceptTouchEvent(true);
+                    gesture = 1;
                     return true;
                 }
+                if (Math.abs(dy) >= swipeDistance && Math.abs(dy) > Math.abs(dx) * 1.2f) {
+                    boolean canToggle = (dy > 0 && !calendarExpanded) || (dy < 0 && calendarExpanded);
+                    if (canToggle) {
+                        gesture = 2;
+                        return true;
+                    }
+                    getParent().requestDisallowInterceptTouchEvent(false);
+                }
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_UP
+                    || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                getParent().requestDisallowInterceptTouchEvent(false);
             }
             return false;
         }
@@ -1184,20 +1270,24 @@ public final class MainActivity extends Activity {
         public boolean onTouchEvent(MotionEvent event) {
             if (event.getActionMasked() == MotionEvent.ACTION_UP) {
                 float dx = event.getX() - downX;
-                if (swiping && Math.abs(dx) >= swipeDistance) {
+                float dy = event.getY() - downY;
+                if (gesture == 1 && Math.abs(dx) >= swipeDistance) {
                     int direction = dx < 0 ? 1 : -1;
                     post(() -> moveVisibleMonth(direction));
+                } else if (gesture == 2 && Math.abs(dy) >= swipeDistance) {
+                    boolean expand = dy > 0;
+                    post(() -> setCalendarExpanded(expand));
                 }
-                swiping = false;
+                gesture = 0;
                 getParent().requestDisallowInterceptTouchEvent(false);
                 return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                swiping = false;
+                gesture = 0;
                 getParent().requestDisallowInterceptTouchEvent(false);
                 return true;
             }
-            return swiping || super.onTouchEvent(event);
+            return gesture != 0 || super.onTouchEvent(event);
         }
 
         @Override

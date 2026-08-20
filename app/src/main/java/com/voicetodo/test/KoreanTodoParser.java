@@ -54,6 +54,17 @@ final class KoreanTodoParser {
     private static final Pattern DURATION = Pattern.compile("(\\d+)시간(?:\\s*(반))?(?:\\s*(\\d+)분)?");
     private static final Pattern DAY_DURATION = Pattern.compile("(\\d+)일\\s*(?:동안|간)");
     private static final Pattern REMINDER = Pattern.compile("(\\d+)\\s*(분|시간|일)\\s*전");
+    private static final Pattern EXPLICIT_STRUCTURED_TITLE = Pattern.compile(
+            "(?im)(?:^|\\R)\\s*(?:[가-힣A-Z]\\s*[.)]|\\d+\\s*[.)]|[-•])?\\s*" +
+                    "(?:제목|일정명|행사명|회의명|안건)\\s*[:：]\\s*([^\\r\\n]+)");
+    private static final Pattern STRUCTURED_LABEL = Pattern.compile(
+            "(?m)(?:^|\\R)\\s*(?:[가-힣A-Z]\\s*[.)]|\\d+\\s*[.)]|[-•])?\\s*" +
+                    "([가-힣A-Za-z][가-힣A-Za-z0-9 ]{1,18})\\s*[:：]");
+    private static final String[] STRUCTURED_ACTIONS = {
+            "입금", "납부", "송금", "결제", "제출", "신청", "접수", "보고",
+            "회의", "교육", "예약", "방문", "출장", "점검", "행사", "면접",
+            "시험", "상담", "발표", "배송", "수령"
+    };
 
     static ParsedCalendarEvent parse(String source) {
         ZoneId zoneId = ZoneId.systemDefault();
@@ -90,7 +101,7 @@ final class KoreanTodoParser {
         if (date.approximate || time.approximate) event.precision = ParsedCalendarEvent.Precision.APPROXIMATE;
         event.requiresConfirmation = date.requiresConfirmation || time.requiresConfirmation;
         event.confirmationReason = date.reason != null ? date.reason : time.reason;
-        event.title = extractTitle(normalized, date, time);
+        event.title = extractTitle(original, normalized, date, time, event.eventType);
         if (event.title.isBlank()) {
             event.title = "새 할 일";
             event.requiresConfirmation = true;
@@ -577,14 +588,20 @@ final class KoreanTodoParser {
         return repeat;
     }
 
-    private static String extractTitle(String normalized, DateParse date, TimeParse time) {
+    private static String extractTitle(String original, String normalized, DateParse date, TimeParse time,
+                                       ParsedCalendarEvent.EventType eventType) {
+        String structured = extractStructuredTitle(original, eventType);
+        if (structured != null) return structured;
+
         String title = normalized;
         if (date.expression != null) title = title.replace(date.expression, " ");
         if (time.expression != null) title = title.replace(time.expression, " ");
         title = TIME.matcher(title).replaceAll(" ");
         title = DURATION.matcher(title).replaceAll(" ");
         title = FULL_DATE.matcher(title).replaceAll(" ");
+        title = NUMERIC_DATE.matcher(title).replaceAll(" ");
         title = WEEKDAY_DATE.matcher(title).replaceAll(" ");
+        title = title.replaceAll("\\([월화수목금토일]\\)", " ");
         title = title.replaceAll("오늘|내일|모레|글피|그글피|정오|자정", " ");
         title = REMINDER.matcher(title).replaceAll(" ");
         title = DAY_DURATION.matcher(title).replaceAll(" ");
@@ -599,7 +616,70 @@ final class KoreanTodoParser {
         title = title.replaceAll("(^|\\s)(부터|까지|에서|에)(?=\\s|$)", " ");
         title = title.replace("~", " ");
         title = title.replaceAll("\\s+", " ").trim();
-        return title.replaceAll("^[,·\\-]|[,·\\-]$", "").trim();
+        title = title.replaceAll("^[,·\\-]|[,·\\-]$", "").trim();
+        return shortenTitle(title);
+    }
+
+    static String summarizeStoredTitle(String original, String currentTitle) {
+        if (original == null || original.isBlank()) return shortenTitle(currentTitle);
+        ParsedCalendarEvent.EventType type = original.contains("까지")
+                ? ParsedCalendarEvent.EventType.DEADLINE : ParsedCalendarEvent.EventType.EVENT;
+        String structured = extractStructuredTitle(original, type);
+        return structured == null ? shortenTitle(currentTitle) : structured;
+    }
+
+    private static String extractStructuredTitle(String original, ParsedCalendarEvent.EventType eventType) {
+        if (original == null || original.isBlank()) return null;
+
+        Matcher explicit = EXPLICIT_STRUCTURED_TITLE.matcher(original);
+        if (explicit.find()) return shortenTitle(cleanStructuredValue(explicit.group(1)));
+
+        Matcher labels = STRUCTURED_LABEL.matcher(original);
+        List<String> labelValues = new ArrayList<>();
+        while (labels.find()) labelValues.add(labels.group(1).replaceAll("\\s+", "").trim());
+        if (labelValues.size() < 2) return null;
+
+        for (String action : STRUCTURED_ACTIONS) {
+            for (String label : labelValues) {
+                if (label.contains(action)) return actionTitle(action, eventType);
+            }
+        }
+
+        String common = labelValues.get(0);
+        for (int i = 1; i < labelValues.size() && common.length() >= 2; i++) {
+            common = commonPrefix(common, labelValues.get(i));
+        }
+        common = common.replaceAll("(날짜|일시|시간|장소|금액|계좌|대상|방법|기간|내용)$", "");
+        return common.length() >= 2 ? actionTitle(common, eventType) : null;
+    }
+
+    private static String actionTitle(String action, ParsedCalendarEvent.EventType eventType) {
+        String cleaned = action.replaceAll("(날짜|일시|시간|장소|금액|계좌|대상|방법|기간|내용)$", "");
+        if (eventType == ParsedCalendarEvent.EventType.DEADLINE && !cleaned.endsWith("마감"))
+            return shortenTitle(cleaned + " 마감");
+        return shortenTitle(cleaned);
+    }
+
+    private static String commonPrefix(String left, String right) {
+        int length = Math.min(left.length(), right.length());
+        int index = 0;
+        while (index < length && left.charAt(index) == right.charAt(index)) index++;
+        return left.substring(0, index);
+    }
+
+    private static String cleanStructuredValue(String value) {
+        return value.replaceAll("^[\\s:：·,\\-]+|[\\s:：·,\\-]+$", "")
+                .replaceAll("\\s+", " ").trim();
+    }
+
+    private static String shortenTitle(String value) {
+        if (value == null) return "";
+        String title = value.replaceAll("\\s+", " ").trim();
+        final int limit = 36;
+        if (title.length() <= limit) return title;
+        int cut = title.lastIndexOf(' ', limit);
+        if (cut < 20) cut = limit;
+        return title.substring(0, cut).trim() + "…";
     }
 
     private static int parseReminder(String text) {
@@ -615,13 +695,13 @@ final class KoreanTodoParser {
 
     private static boolean isDeadline(String text, DateParse date, TimeParse time) {
         if (!text.contains("까지") || date.end != null || time.end != null) return false;
-        return containsAny(text, "마감", "제출", "신청", "보내기", "결제", "완료");
+        return containsAny(text, "마감", "제출", "신청", "보내기", "결제", "완료", "입금", "납부", "송금");
     }
 
     private static String guessCategory(String text) {
         String lower = text.toLowerCase(Locale.KOREAN);
         if (containsAny(lower, "회의", "보고서", "보고", "월보고", "업무", "회사", "프로젝트", "마감",
-                "제출", "신청서", "출장", "교육", "견학")) return "업무";
+                "제출", "신청서", "출장", "교육", "견학", "입금", "납부", "송금", "계좌")) return "업무";
         if (containsAny(lower, "병원", "치과", "운동", "약", "검진")) return "건강";
         if (containsAny(lower, "구매", "장보기", "사기", "마트")) return "쇼핑";
         if (containsAny(lower, "만나", "약속", "예약", "미팅")) return "약속";
