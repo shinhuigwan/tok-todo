@@ -88,7 +88,9 @@ public final class MainActivity extends Activity {
     private static final int BORDER = Color.rgb(227, 229, 238);
 
     private final List<TodoItem> items = new ArrayList<>();
+    private final List<MemoItem> memos = new ArrayList<>();
     private TodoStore store;
+    private MemoStore memoStore;
     private GridLayout calendarGrid;
     private TextView yearTitle;
     private TextView monthTitle;
@@ -112,6 +114,8 @@ public final class MainActivity extends Activity {
         NotificationHelper.scheduleNextDailySummary(this);
         store = new TodoStore(this);
         items.addAll(store.load());
+        memoStore = new MemoStore(this);
+        memos.addAll(memoStore.load());
         migrateStoredTitles();
         sortItems();
         setContentView(buildScreen());
@@ -148,15 +152,11 @@ public final class MainActivity extends Activity {
         heading.addView(title);
         top.addView(heading, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView todayBadge = text("오늘", 13, PURPLE, true);
-        todayBadge.setGravity(Gravity.CENTER);
-        todayBadge.setBackground(rounded(PURPLE_SOFT, 18, Color.TRANSPARENT));
-        todayBadge.setOnClickListener(v -> {
-            selectedDate = LocalDate.now();
-            visibleMonth = YearMonth.from(selectedDate);
-            renderAll();
-        });
-        top.addView(todayBadge, new LinearLayout.LayoutParams(dp(58), dp(38)));
+        TextView memoBadge = text("메모", 13, PURPLE, true);
+        memoBadge.setGravity(Gravity.CENTER);
+        memoBadge.setBackground(rounded(PURPLE_SOFT, 18, Color.TRANSPARENT));
+        memoBadge.setOnClickListener(v -> showMemoNotebook(selectedDate));
+        top.addView(memoBadge, new LinearLayout.LayoutParams(dp(58), dp(38)));
         page.addView(top, matchWrap());
 
         LinearLayout voiceCard = vertical();
@@ -167,7 +167,7 @@ public final class MainActivity extends Activity {
         TextView voiceTitle = text("🎙  말하면 바로 저장돼요", 16, Color.WHITE, true);
         voiceTitle.setGravity(Gravity.CENTER);
         voiceCard.addView(voiceTitle);
-        TextView voiceHint = text("예: 내일 오후 3시 치과 예약, 30분 전에 알려줘", 11,
+        TextView voiceHint = text("예: 내일 3시 치과 예약 · 우유 사기 메모해줘", 11,
                 Color.rgb(225, 222, 255), false);
         voiceHint.setGravity(Gravity.CENTER);
         voiceHint.setPadding(0, dp(3), 0, 0);
@@ -397,6 +397,10 @@ public final class MainActivity extends Activity {
     }
 
     private void addTodoFromText(String source) {
+        if (MemoCommandParser.isMemoCommand(source)) {
+            saveVoiceMemo(source);
+            return;
+        }
         ParsedCalendarEvent parsed = KoreanTodoParser.parse(source);
         if (parsed.intent == ParsedCalendarEvent.Intent.SEARCH_EVENT) {
             selectedDate = parsed.startDate;
@@ -441,6 +445,172 @@ public final class MainActivity extends Activity {
         visibleMonth = YearMonth.from(selectedDate);
         renderAll();
         Toast.makeText(this, "‘" + item.title + "’을 바로 저장했습니다.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void saveVoiceMemo(String source) {
+        MemoCommandParser.Draft draft = MemoCommandParser.parse(source);
+        if (draft.content.isBlank()) {
+            Toast.makeText(this, "저장할 메모 내용을 함께 말해 주세요.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        MemoItem memo = new MemoItem(
+                UUID.randomUUID().toString(), draft.title, draft.content,
+                draft.date.toEpochDay(), System.currentTimeMillis());
+        memos.add(memo);
+        memoStore.save(memos);
+        Toast.makeText(this, draft.date.getMonthValue() + "월 " + draft.date.getDayOfMonth()
+                + "일 메모장에 저장했습니다.", Toast.LENGTH_LONG).show();
+    }
+
+    private void showMemoNotebook(LocalDate initialDate) {
+        LocalDate[] memoDate = {initialDate == null ? LocalDate.now() : initialDate};
+        LinearLayout notebook = vertical();
+        notebook.setPadding(dp(20), dp(4), dp(20), dp(8));
+
+        TextView guide = text("선택한 날짜별로 메모를 따로 보관합니다.", 12, MUTED, false);
+        guide.setPadding(0, 0, 0, dp(10));
+        notebook.addView(guide, matchWrap());
+
+        Button dateButton = button("", PURPLE_SOFT, PURPLE);
+        dateButton.setText("저장 날짜 · " + editDateLabel(memoDate[0]));
+        notebook.addView(dateButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+
+        TextView titleLabel = text("제목 · 선택", 12, MUTED, true);
+        titleLabel.setPadding(0, dp(14), 0, dp(4));
+        notebook.addView(titleLabel, matchWrap());
+        EditText memoTitle = new EditText(this);
+        memoTitle.setHint("비워 두면 내용 첫 줄이 제목이 됩니다");
+        memoTitle.setTextSize(15);
+        memoTitle.setSingleLine(true);
+        memoTitle.setPadding(dp(12), 0, dp(12), 0);
+        memoTitle.setBackground(rounded(Color.rgb(250, 250, 253), 14, BORDER));
+        notebook.addView(memoTitle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
+        TextView contentLabel = text("내용", 12, MUTED, true);
+        contentLabel.setPadding(0, dp(12), 0, dp(4));
+        notebook.addView(contentLabel, matchWrap());
+        EditText memoContent = new EditText(this);
+        memoContent.setHint("자유롭게 메모하세요");
+        memoContent.setTextSize(15);
+        memoContent.setGravity(Gravity.TOP | Gravity.START);
+        memoContent.setMinLines(4);
+        memoContent.setMaxLines(8);
+        memoContent.setHorizontallyScrolling(false);
+        memoContent.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        memoContent.setPadding(dp(12), dp(10), dp(12), dp(10));
+        memoContent.setBackground(rounded(Color.rgb(250, 250, 253), 14, BORDER));
+        notebook.addView(memoContent, matchWrap());
+
+        Button saveMemo = button("이 날짜에 저장", PURPLE, Color.WHITE);
+        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        saveParams.setMargins(0, dp(14), 0, 0);
+        notebook.addView(saveMemo, saveParams);
+
+        TextView memoListTitle = text("", 15, INK, true);
+        memoListTitle.setPadding(0, dp(20), 0, dp(8));
+        notebook.addView(memoListTitle, matchWrap());
+        LinearLayout memoList = vertical();
+        notebook.addView(memoList, matchWrap());
+        renderMemoList(memoList, memoListTitle, memoDate[0]);
+
+        dateButton.setOnClickListener(v -> new DatePickerDialog(this, (picker, year, month, day) -> {
+            memoDate[0] = LocalDate.of(year, month + 1, day);
+            dateButton.setText("저장 날짜 · " + editDateLabel(memoDate[0]));
+            renderMemoList(memoList, memoListTitle, memoDate[0]);
+        }, memoDate[0].getYear(), memoDate[0].getMonthValue() - 1,
+                memoDate[0].getDayOfMonth()).show());
+
+        saveMemo.setOnClickListener(v -> {
+            String content = memoContent.getText().toString().trim();
+            if (content.isBlank()) {
+                memoContent.setError("메모 내용을 입력해 주세요.");
+                memoContent.requestFocus();
+                return;
+            }
+            String title = memoTitle.getText().toString().trim();
+            if (title.isBlank()) title = MemoCommandParser.summarizeTitle(content);
+            MemoItem memo = new MemoItem(
+                    UUID.randomUUID().toString(), title, content,
+                    memoDate[0].toEpochDay(), System.currentTimeMillis());
+            memos.add(memo);
+            memoStore.save(memos);
+            memoTitle.setText("");
+            memoContent.setText("");
+            renderMemoList(memoList, memoListTitle, memoDate[0]);
+            Toast.makeText(this, "메모를 저장했습니다.", Toast.LENGTH_SHORT).show();
+        });
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(notebook);
+        new AlertDialog.Builder(this)
+                .setTitle("메모장")
+                .setView(scroll)
+                .setNegativeButton("닫기", null)
+                .show();
+    }
+
+    private void renderMemoList(LinearLayout memoList, TextView titleView, LocalDate date) {
+        memoList.removeAllViews();
+        List<MemoItem> dayMemos = new ArrayList<>();
+        for (MemoItem memo : memos) if (memo.date().equals(date)) dayMemos.add(memo);
+        dayMemos.sort(Comparator.comparingLong((MemoItem memo) -> memo.createdAt).reversed());
+        titleView.setText("저장된 메모 " + dayMemos.size() + "개");
+
+        if (dayMemos.isEmpty()) {
+            TextView empty = text("이 날짜에는 저장된 메모가 없어요.", 13, MUTED, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(10), dp(20), dp(10), dp(20));
+            memoList.addView(empty, matchWrap());
+            return;
+        }
+
+        for (MemoItem memo : dayMemos) {
+            LinearLayout card = horizontal();
+            card.setPadding(dp(13), dp(12), dp(8), dp(12));
+            card.setBackground(rounded(SURFACE, 15, BORDER));
+
+            View marker = new View(this);
+            marker.setBackground(rounded(PURPLE, 3, Color.TRANSPARENT));
+            LinearLayout.LayoutParams markerParams = new LinearLayout.LayoutParams(dp(4),
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            markerParams.setMarginEnd(dp(11));
+            card.addView(marker, markerParams);
+
+            LinearLayout words = vertical();
+            TextView memoTitle = text(memo.title, 15, INK, true);
+            words.addView(memoTitle, matchWrap());
+            TextView memoBody = text(memo.content, 13, MUTED, false);
+            memoBody.setPadding(0, dp(4), 0, 0);
+            memoBody.setMaxLines(4);
+            memoBody.setEllipsize(TextUtils.TruncateAt.END);
+            words.addView(memoBody, matchWrap());
+            card.addView(words, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            Button delete = button("삭제", Color.rgb(246, 246, 249), MUTED);
+            delete.setTextSize(12);
+            delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+                    .setMessage("‘" + memo.title + "’ 메모를 삭제할까요?")
+                    .setNegativeButton("취소", null)
+                    .setPositiveButton("삭제", (dialog, which) -> {
+                        memos.remove(memo);
+                        memoStore.save(memos);
+                        renderMemoList(memoList, titleView, date);
+                    })
+                    .show());
+            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(dp(54), dp(38));
+            deleteParams.setMarginStart(dp(8));
+            card.addView(delete, deleteParams);
+
+            LinearLayout.LayoutParams cardParams = matchWrap();
+            cardParams.setMargins(0, 0, 0, dp(8));
+            memoList.addView(card, cardParams);
+        }
     }
 
     private String formatParsedSummary(ParsedCalendarEvent parsed) {
