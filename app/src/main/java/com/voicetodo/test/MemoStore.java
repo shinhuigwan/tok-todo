@@ -29,8 +29,7 @@ final class MemoStore {
         } catch (JSONException ignored) {
             // 손상된 메모 한 건 때문에 앱 전체가 실행되지 않는 상황을 막는다.
         }
-        memos.sort(Comparator.comparingLong((MemoItem memo) -> memo.dateEpochDay)
-                .thenComparingLong(memo -> memo.createdAt).reversed());
+        memos.sort(Comparator.comparingLong(memo -> memo.createdAt));
         return memos;
     }
 

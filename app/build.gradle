@@ -10,8 +10,8 @@ android {
         applicationId "com.voicetodo.test"
         minSdk 26
         targetSdk 35
-        versionCode 19
-        versionName "0.14.0-test"
+        versionCode 20
+        versionName "0.14.1-test"
     }
 
     buildTypes {
