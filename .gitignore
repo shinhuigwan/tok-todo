@@ -5,6 +5,7 @@ app/build/
 desktop/build/
 worktest/
 local.properties
+.signing/
 *.iml
 credentials.json
 token.json
