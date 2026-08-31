@@ -1,0 +1,42 @@
+plugins {
+    id "application"
+}
+
+dependencies {
+    implementation "com.google.code.gson:gson:2.11.0"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+application {
+    mainClass = "com.voicetodo.desktop.TokTodoDesktop"
+    applicationDefaultJvmArgs = ["-Dfile.encoding=UTF-8"]
+}
+
+tasks.register("windowsInstaller", Exec) {
+    dependsOn(tasks.named("installDist"))
+    doFirst {
+        delete(layout.buildDirectory.dir("installer"))
+        layout.buildDirectory.dir("installer").get().asFile.mkdirs()
+    }
+    commandLine(
+            "jpackage",
+            "--type", "exe",
+            "--name", "TokTodo",
+            "--description", "TokTodo calendar and daily work journal",
+            "--vendor", "TokTodo",
+            "--app-version", "1.0.0",
+            "--input", layout.buildDirectory.dir("install/desktop/lib").get().asFile.absolutePath,
+            "--main-jar", "desktop.jar",
+            "--main-class", application.mainClass.get(),
+            "--dest", layout.buildDirectory.dir("installer").get().asFile.absolutePath,
+            "--win-menu",
+            "--win-shortcut",
+            "--win-dir-chooser",
+            "--verbose"
+    )
+}

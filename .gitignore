@@ -2,6 +2,9 @@
 .idea/
 build/
 app/build/
+desktop/build/
 worktest/
 local.properties
 *.iml
+credentials.json
+token.json

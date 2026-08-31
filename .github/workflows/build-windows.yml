@@ -1,0 +1,52 @@
+name: Build 톡todo Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "desktop/**"
+      - "build.gradle"
+      - "settings.gradle"
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Compile and test desktop app
+        run: gradle --no-daemon :desktop:check
+
+      - name: Set up WiX 3.14
+        shell: pwsh
+        run: |
+          $wixArchive = Join-Path $env:RUNNER_TEMP "wix314-binaries.zip"
+          $wixDirectory = Join-Path $env:RUNNER_TEMP "wix314"
+          Invoke-WebRequest "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip" -OutFile $wixArchive
+          Expand-Archive -LiteralPath $wixArchive -DestinationPath $wixDirectory -Force
+          $wixDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build Windows installer
+        run: gradle --no-daemon :desktop:windowsInstaller
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: tok-todo-windows-installer
+          path: desktop/build/installer/*.exe
+          retention-days: 30
